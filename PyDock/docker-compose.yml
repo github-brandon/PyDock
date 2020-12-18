@@ -1,0 +1,475 @@
+version: '3.5'
+
+networks:
+  frontend:
+    driver:
+  backend:
+    driver:
+
+volumes:
+
+services:
+
+
+### Workspace Utilities ##################################
+  workspace:
+    build:
+      context: ./workspace
+      args:
+    volumes:
+    extra_hosts:
+    ports:
+    tty: true
+    environment:
+    networks:
+      - frontend
+      - backend
+    links:
+
+### PHP-FPM ############################################
+  php-fpm:
+    build:
+      context: library/php-fpm
+      args:
+    volumes:
+    expose:
+      - "9000"
+    extra_hosts:
+      - "dockerhost:${DOCKER_HOST_IP}"
+    environment:
+        - PHP_IDE_CONFIG=${PHP_IDE_CONFIG}
+        - DOCKER_HOST=tcp://docker-in-docker:2376
+        - DOCKER_TLS_VERIFY=1
+        - DOCKER_TLS_CERTDIR=/certs
+        - DOCKER_CERT_PATH=/certs/client
+        - FAKETIME=${PHP_FPM_FAKETIME}
+      depends_on:
+        - workspace
+      networks:
+        - backend
+      links:
+        - docker-in-docker
+
+### PHP Worker ############################################
+    php-worker:
+      build:
+        context: ./library/php-worker
+        args:
+          - CHANGE_SOURCE=${CHANGE_SOURCE}
+          - LARADOCK_PHP_VERSION=${PHP_VERSION}
+          - PHALCON_VERSION=${PHALCON_VERSION}
+          - INSTALL_BZ2=${PHP_WORKER_INSTALL_BZ2}
+          - INSTALL_GD=${PHP_WORKER_INSTALL_GD}
+          - INSTALL_IMAGEMAGICK=${PHP_WORKER_INSTALL_IMAGEMAGICK}
+          - INSTALL_GMP=${PHP_WORKER_INSTALL_GMP}
+          - INSTALL_PGSQL=${PHP_WORKER_INSTALL_PGSQL}
+          - INSTALL_BCMATH=${PHP_WORKER_INSTALL_BCMATH}
+          - INSTALL_OCI8=${PHP_WORKER_INSTALL_OCI8}
+          - INSTALL_PHALCON=${PHP_WORKER_INSTALL_PHALCON}
+          - INSTALL_SOAP=${PHP_WORKER_INSTALL_SOAP}
+          - INSTALL_ZIP_ARCHIVE=${PHP_WORKER_INSTALL_ZIP_ARCHIVE}
+          - INSTALL_MYSQL_CLIENT=${PHP_WORKER_INSTALL_MYSQL_CLIENT}
+          - INSTALL_AMQP=${PHP_WORKER_INSTALL_AMQP}
+          - INSTALL_CASSANDRA=${PHP_WORKER_INSTALL_CASSANDRA}
+          - INSTALL_GEARMAN=${PHP_WORKER_INSTALL_GEARMAN}
+          - INSTALL_GHOSTSCRIPT=${PHP_WORKER_INSTALL_GHOSTSCRIPT}
+          - INSTALL_SWOOLE=${PHP_WORKER_INSTALL_SWOOLE}
+          - INSTALL_TAINT=${PHP_WORKER_INSTALL_TAINT}
+          - INSTALL_FFMPEG=${PHP_WORKER_INSTALL_FFMPEG}
+          - INSTALL_AUDIOWAVEFORM=${PHP_WORKER_INSTALL_AUDIOWAVEFORM}
+          - INSTALL_REDIS=${PHP_WORKER_INSTALL_REDIS}
+          - INSTALL_IMAP=${PHP_WORKER_INSTALL_IMAP}
+          - INSTALL_XMLRPC=${PHP_WORKER_INSTALL_XMLRPC}
+          - PUID=${PHP_WORKER_PUID}
+          - PGID=${PHP_WORKER_PGID}
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+        - ./library/php-worker/supervisord.d:/etc/supervisord.d
+      depends_on:
+        - workspace
+      extra_hosts:
+        - "dockerhost:${DOCKER_HOST_IP}"
+      networks:
+        - backend
+
+### NGINX Server #########################################
+    nginx:
+      build:
+        context: ./library/nginx
+        args:
+          - CHANGE_SOURCE=${CHANGE_SOURCE}
+          - PHP_UPSTREAM_CONTAINER=${NGINX_PHP_UPSTREAM_CONTAINER}
+          - PHP_UPSTREAM_PORT=${NGINX_PHP_UPSTREAM_PORT}
+          - http_proxy
+          - https_proxy
+          - no_proxy
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+        - ${NGINX_HOST_LOG_PATH}:/var/log/nginx
+        - ${NGINX_SITES_PATH}:/etc/nginx/sites-available
+        - ${NGINX_SSL_PATH}:/etc/nginx/ssl
+      ports:
+        - "${NGINX_HOST_HTTP_PORT}:80"
+        - "${NGINX_HOST_HTTPS_PORT}:443"
+        - "${VARNISH_BACKEND_PORT}:81"
+      depends_on:
+        - php-fpm
+      networks:
+        - frontend
+        - backend
+
+
+### Apache Server ########################################
+    apache2:
+      build:
+        context: ./library/apache2
+        args:
+          - PHP_UPSTREAM_CONTAINER=${APACHE_PHP_UPSTREAM_CONTAINER}
+          - PHP_UPSTREAM_PORT=${APACHE_PHP_UPSTREAM_PORT}
+          - PHP_UPSTREAM_TIMEOUT=${APACHE_PHP_UPSTREAM_TIMEOUT}
+          - DOCUMENT_ROOT=${APACHE_DOCUMENT_ROOT}
+          - APACHE_INSTALL_HTTP2=${APACHE_INSTALL_HTTP2}
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+        - ${APACHE_HOST_LOG_PATH}:/var/log/apache2
+        - ${APACHE_SITES_PATH}:/etc/apache2/sites-available
+      ports:
+        - "${APACHE_HOST_HTTP_PORT}:80"
+        - "${APACHE_HOST_HTTPS_PORT}:443"
+      depends_on:
+        - php-fpm
+      networks:
+        - frontend
+        - backend
+
+### HHVM #################################################
+    hhvm:
+      build: ./library/hhvm
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}${APP_CODE_CONTAINER_FLAG}
+      expose:
+        - "9000"
+      depends_on:
+        - workspace
+      networks:
+        - frontend
+        - backend
+
+### MySQL ################################################
+    mysql:
+      build:
+        context: ./library/mysql
+        args:
+          - MYSQL_VERSION=${MYSQL_VERSION}
+      environment:
+        - MYSQL_DATABASE=${MYSQL_DATABASE}
+        - MYSQL_USER=${MYSQL_USER}
+        - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+        - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+        - TZ=${WORKSPACE_TIMEZONE}
+      volumes:
+        - ${DATA_PATH_HOST}/mysql:/var/lib/mysql
+        - ${MYSQL_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${MYSQL_PORT}:3306"
+      networks:
+        - backend
+
+### MariaDB ##############################################
+    mariadb:
+      build:
+        context: ./library/mariadb
+        args:
+          - http_proxy
+          - https_proxy
+          - no_proxy
+          - MARIADB_VERSION=${MARIADB_VERSION}
+      volumes:
+        - ${DATA_PATH_HOST}/mariadb:/var/lib/mysql
+        - ${MARIADB_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${MARIADB_PORT}:3306"
+      environment:
+        - TZ=${WORKSPACE_TIMEZONE}
+        - MYSQL_DATABASE=${MARIADB_DATABASE}
+        - MYSQL_USER=${MARIADB_USER}
+        - MYSQL_PASSWORD=${MARIADB_PASSWORD}
+        - MYSQL_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      networks:
+        - backend
+
+### PostgreSQL ###########################################
+    postgres:
+      build:
+        context: ./library/postgres
+        args:
+          - POSTGRES_VERSION=${POSTGRES_VERSION}
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+        - ${POSTGRES_ENTRYPOINT_INITDB}:/docker-entrypoint-initdb.d
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_INIT=${GITLAB_POSTGRES_INIT}
+        - GITLAB_POSTGRES_USER=${GITLAB_POSTGRES_USER}
+        - GITLAB_POSTGRES_PASSWORD=${GITLAB_POSTGRES_PASSWORD}
+        - GITLAB_POSTGRES_DB=${GITLAB_POSTGRES_DB}
+        - JUPYTERHUB_POSTGRES_INIT=${JUPYTERHUB_POSTGRES_INIT}
+        - JUPYTERHUB_POSTGRES_USER=${JUPYTERHUB_POSTGRES_USER}
+        - JUPYTERHUB_POSTGRES_PASSWORD=${JUPYTERHUB_POSTGRES_PASSWORD}
+        - JUPYTERHUB_POSTGRES_DB=${JUPYTERHUB_POSTGRES_DB}
+        - SONARQUBE_POSTGRES_INIT=${SONARQUBE_POSTGRES_INIT}
+        - SONARQUBE_POSTGRES_DB=${SONARQUBE_POSTGRES_DB}
+        - SONARQUBE_POSTGRES_USER=${SONARQUBE_POSTGRES_USER}
+        - SONARQUBE_POSTGRES_PASSWORD=${SONARQUBE_POSTGRES_PASSWORD}
+        - POSTGRES_CONFLUENCE_INIT=${CONFLUENCE_POSTGRES_INIT}
+        - POSTGRES_CONFLUENCE_DB=${CONFLUENCE_POSTGRES_DB}
+        - POSTGRES_CONFLUENCE_USER=${CONFLUENCE_POSTGRES_USER}
+        - POSTGRES_CONFLUENCE_PASSWORD=${CONFLUENCE_POSTGRES_PASSWORD}
+      networks:
+        - backend
+
+### PostgreSQL PostGis ###################################
+    postgres-postgis:
+      build: ./library/postgres-postgis
+      volumes:
+        - ${DATA_PATH_HOST}/postgres:/var/lib/postgresql/data
+      ports:
+        - "${POSTGRES_PORT}:5432"
+      environment:
+        - POSTGRES_DB=${POSTGRES_DB}
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      networks:
+        - backend
+
+### phpMyAdmin ###########################################
+    phpmyadmin:
+      build: ./library/phpmyadmin
+      environment:
+        - PMA_ARBITRARY=1
+        - MYSQL_USER=${PMA_USER}
+        - MYSQL_PASSWORD=${PMA_PASSWORD}
+        - MYSQL_ROOT_PASSWORD=${PMA_ROOT_PASSWORD}
+      ports:
+        - "${PMA_PORT}:80"
+      depends_on:
+        - "${PMA_DB_ENGINE}"
+      networks:
+        - frontend
+        - backend
+
+### pgAdmin ##############################################
+    pgadmin:
+      image: dpage/pgadmin4:latest
+      environment:
+        - "PGADMIN_DEFAULT_EMAIL=${PGADMIN_DEFAULT_EMAIL}"
+        - "PGADMIN_DEFAULT_PASSWORD=${PGADMIN_DEFAULT_PASSWORD}"
+      ports:
+        - "${PGADMIN_PORT}:80"
+      volumes:
+        - ${DATA_PATH_HOST}/pgadmin:/var/lib/pgadmin
+      depends_on:
+        - postgres
+      networks:
+        - frontend
+        - backend
+
+### Certbot #########################################
+    certbot:
+      build:
+        context: ./library/certbot
+      volumes:
+        - ./data/certbot/certs/:/var/certs
+        - ./certbot/letsencrypt/:/var/www/letsencrypt
+      environment:
+        - CN="fake.domain.com"
+        - EMAIL="fake.email@gmail.com"
+      networks:
+        - frontend
+
+### Selenium ###############################################
+    selenium:
+      build: ./library/selenium
+      ports:
+        - "${SELENIUM_PORT}:4444"
+      volumes:
+        - /dev/shm:/dev/shm
+      networks:
+        - frontend
+### Varnish ##########################################
+
+    ### Proxy 1
+
+    proxy:
+      container_name: proxy
+      build: ./library/varnish
+      expose:
+        - ${VARNISH_PORT}
+      environment:
+        - VARNISH_CONFIG=${VARNISH_CONFIG}
+        - CACHE_SIZE=${VARNISH_PROXY1_CACHE_SIZE}
+        - VARNISHD_PARAMS=${VARNISHD_PARAMS}
+        - VARNISH_PORT=${VARNISH_PORT}
+        - BACKEND_HOST=${VARNISH_PROXY1_BACKEND_HOST}
+        - BACKEND_PORT=${VARNISH_BACKEND_PORT}
+        - VARNISH_SERVER=${VARNISH_PROXY1_SERVER}
+      ports:
+        - "${VARNISH_PORT}:${VARNISH_PORT}"
+      links:
+        - workspace
+      networks:
+        - frontend
+
+    ### Proxy 2
+
+    proxy2:
+      container_name: proxy2
+      build: ./library/varnish
+      expose:
+        - ${VARNISH_PORT}
+      environment:
+        - VARNISH_CONFIG=${VARNISH_CONFIG}
+        - CACHE_SIZE=${VARNISH_PROXY2_CACHE_SIZE}
+        - VARNISHD_PARAMS=${VARNISHD_PARAMS}
+        - VARNISH_PORT=${VARNISH_PORT}
+        - BACKEND_HOST=${VARNISH_PROXY2_BACKEND_HOST}
+        - BACKEND_PORT=${VARNISH_BACKEND_PORT}
+        - VARNISH_SERVER=${VARNISH_PROXY2_SERVER}
+      ports:
+        - "${VARNISH_PORT}:${VARNISH_PORT}"
+      links:
+        - workspace
+      networks:
+        - frontend
+
+### HAProxy ####################################
+    haproxy:
+      build: ./library/haproxy
+      ports:
+        - "${HAPROXY_HOST_HTTP_PORT}:8085"
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+      links:
+        - proxy
+        - proxy2
+
+### IPython #########################################
+    ipython-controller:
+      build:
+        context: ./library/ipython
+        dockerfile: Dockerfile.controller
+      networks:
+        - backend
+      extra_hosts:
+        - "laradock-ipython:${LARADOCK_IPYTHON_CONTROLLER_IP}"
+      ports:
+        - "33327-33338:33327-33338"
+    ipython-engine:
+      build:
+        context: ./library/ipython
+        dockerfile: Dockerfile.engine
+      networks:
+        - backend
+      extra_hosts:
+        - "laradock-ipython:${LARADOCK_IPYTHON_CONTROLLER_IP}"
+
+### Docker-in-Docker ################################################
+    docker-in-docker:
+      image: docker:19.03-dind
+      environment:
+        DOCKER_TLS_SAN: DNS:docker-in-docker
+      privileged: true
+      volumes:
+        - ${APP_CODE_PATH_HOST}:${APP_CODE_PATH_CONTAINER}
+        - docker-in-docker:/certs/client
+      expose:
+        - 2375
+      networks:
+        - backend
+
+### TRAEFIK #########################################
+    traefik:
+      build:
+        context: ./library/traefik
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
+        - ./library/traefik/data:/data
+      command:
+        - "--api"
+        - "--providers.docker.exposedbydefault=false"
+        - "--accesslog.filepath=/data/access.log"
+        # entrypoints
+        - "--entrypoints.http.address=:${TRAEFIK_HOST_HTTP_PORT}"
+        - "--entrypoints.http.http.redirections.entrypoint.to=https"
+        - "--entrypoints.https.address=:${TRAEFIK_HOST_HTTPS_PORT}"
+        - "--entrypoints.traefik.address=:${TRAEFIK_DASHBOARD_PORT}"
+        # certificatesresolvers
+        - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+        - "--certificatesresolvers.letsencrypt.acme.storage=/data/acme.json"
+        - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=http"
+      ports:
+        - "${TRAEFIK_HOST_HTTP_PORT}:${TRAEFIK_HOST_HTTP_PORT}"
+        - "${TRAEFIK_HOST_HTTPS_PORT}:${TRAEFIK_HOST_HTTPS_PORT}"
+        - "${TRAEFIK_DASHBOARD_PORT}:${TRAEFIK_DASHBOARD_PORT}"
+      networks:
+        - frontend
+        - backend
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.traefik.rule=Host(`${ACME_DOMAIN}`)"
+        - "traefik.http.routers.traefik.entrypoints=traefik"
+        - "traefik.http.routers.traefik.service=api@internal"
+        - "traefik.http.routers.traefik.middlewares=access-auth"
+        - "traefik.http.routers.traefik.tls.certresolver=letsencrypt"
+        - "traefik.http.middlewares.access-auth.basicauth.realm=Login Required"
+        - "traefik.http.middlewares.access-auth.basicauth.users=${TRAEFIK_DASHBOARD_USER}"
+
+### CONFLUENCE ################################################
+    confluence:
+      container_name: Confluence
+      image: atlassian/confluence-server:${CONFLUENCE_VERSION}
+      restart: always
+      ports:
+        - "${CONFLUENCE_HOST_HTTP_PORT}:8090"
+      networks:
+        - frontend
+        - backend
+      depends_on:
+        - postgres
+      volumes:
+        - ${DATA_PATH_HOST}/Confluence:/var/atlassian/application-data
+
+### tomcat ####################################################
+    tomcat:
+      container_name: tomcat
+      image: tomcat:${TOMCAT_VERSION}
+      ports:
+        - "${TOMCAT_HOST_HTTP_PORT}:8080"
+      networks:
+        - frontend
+        - backend
+      volumes:
+        - ${DATA_PATH_HOST}/tomcat/webapps:/usr/local/tomcat/webapps
+        - ${DATA_PATH_HOST}/tomcat/logs:/usr/local/tomcat/logs
+      # restart: always
+
+### react #####################################################
+    react:
+      build:
+        context: ./library/react
+      ports:
+        - "3000:3000"
+      container_name: react
+      stdin_open: true
+      environment:
+        - CHOKIDAR_USEPOLLING=true
+      networks:
+          - frontend
+          - backend
+      volumes:
+        - ./library/react:/usr/src/app/react
+        - /usr/src/app/react/node_modules
